@@ -279,49 +279,6 @@ p_hopfield
 
 
 #####################################################################
-## SK Model
-
-deliv_dir <- file.path("deliv", "numerical_experiment", "potts_gaussian")
-
-n_states <- 4
-beta_range <- c(0.5, 0.8, 1, 1.2, 2)
-
-eff_data <- c()
-for (i in 1:length(beta_range)) {
-  eff_file <- read.csv(file = file.path(deliv_dir,
-                                        paste0("256gaussian_", beta_range[i],
-                                               "_", n_states, "_efficiency.csv")))
-  eff_file <- eff_file[1, ]
-  
-  eff_data <- c(eff_data, eff_file$eff_AG_potts,
-                eff_file$eff_HB,
-                eff_file$eff_Wolff)  # , WOLFF
-  # eff_file$eff_SW)
-}
-
-n_algorithm = 2
-method <- rep(c("AG", "Heat Bath"), length(beta_range))
-method <- factor(method, level = c("AG", "Heat Bath"))
-
-# beta <- rep(c(2, 1, 0.5), each = 6)
-beta <- rep(beta_range, each = n_algorithm)
-parm <- rep("K(x)", length(eff_data))
-parm_labels <- rep(c(TeX("$K(x)$")))
-parm <- factor(parm, label = parm_labels)
-
-p <- ggplot(data.frame(eff = eff_data, beta = beta,
-                       method = method, parm = parm),
-            aes(x = beta, y = eff, linetype = method,
-            )) +
-  geom_point() + geom_line() + theme_bw() +
-  # facet_wrap(~parm, labeller = "label_parsed") + 
-  scale_y_continuous(trans='log2') +
-  xlab(TeX("$\\beta$")) +
-  ylab(TeX("$N_{eff} / s")) +
-  theme(text = element_text(size = 16))
-p
-
-#####################################################################
 ## SK Model (cold, using tempering)
 n_algorithm <- 3  # 3
 beta_range <- seq(from = 0.5, to = 3, by = 0.25)
