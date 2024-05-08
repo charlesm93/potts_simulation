@@ -4,6 +4,7 @@
 
 # library(extraDistr)  # CHECK -- do we need this?
 source("tools.r")
+source("algorithms.r")
 
 # Simulate states from the Potts model, using auxiliary Gaussian variables.
 #
@@ -71,7 +72,6 @@ ag_potts_simple <- function (A, beta, init, n_states = 2, n_iter = 1000, B = 0,
   }
   X
 }
-
 
 
 ###############################################################################
@@ -150,26 +150,257 @@ ag_potts_lowrank__ <- function (C, init, n_states = 2, n_iter = 1000,
 ag_potts_lowrank <- function(A, beta, init, n_states = 2, n_iter = 1000,
                              alpha_modif = 1e-7, epsilon = 1e-12) {
   n_particles = nrow(A)
-  # spectral_decomposition = eigen(2 * beta * A, symmetric = TRUE)
-  # n_rank = length(
-  #   spectral_decomposition$values[abs(spectral_decomposition$values) > epsilon])
-  # 
-  # A_tilde = matrix(0, nrow = n_particles, ncol = n_particles)
-  # for (i in 1:n_rank) {
-  #   A_tilde = A_tilde +
-  #     spectral_decomposition$values[i] * spectral_decomposition$vectors[, i] %*% 
-  #       t(spectral_decomposition$vectors[, i])
-  # }
-  # 
-  # alpha <- abs(min(eigen(A_tilde, symmetric = TRUE, only.values = TRUE)$values))
-  # C_tilde <- A_tilde + alpha * diag(n_particles)
-
   alpha = abs(min(eigen(A, symmetric = TRUE, only.values = TRUE)$values))
   alpha = alpha + alpha_modif
   C = 2 * beta * (A + alpha * diag(n_particles))
 
   ag_potts_lowrank__(C, init, n_states, n_iter, epsilon)
 }
+
+# Wrapper function for all AG algorithms
+ag_sampler <- function(A, beta, init, n_states = 2, n_iter = 1000,
+                       alpha_modif = 1e-7, lowrank = FALSE, epsilon = 1e-12,
+                       B = 0, retain_alpha = FALSE, perturb = FALSE) {
+  if (n_states == 2) {
+    if (lowrank == TRUE) {
+      X = ag_ising_lowrank(A, beta, init, n_iter, epsilon)
+    } else {
+      # Magnetic field is set to 0.
+      X = sumit_sampler(A, beta, B, init, n_iter, alpha_modif, retain_alpha,
+                        perturb)
+    }
+  } else {
+    if (lowrank == TRUE) {
+      X = ag_potts_lowrank(A, beta, init, n_states, n_iter, alpha_modif,
+                           epsilon)
+    } else {
+      X = ag_potts_simple(A, beta, init, n_states, n_iter, B, alpha_modif,
+                          retain_alpha, perturb)
+    }
+  }
+  return(X)
+}
+
+
+###############################################################################
+## Gibbs with gradient (Grathwohl et al 2021)
+# NOTE: hand-coded categorical distribution is faster than R's built-in.
+
+compute_d_tilde_half <- function(J, W_prime, index_row = NA, W = NA,
+                                 d_tilde_half = NA, w_diff = NA,
+                                 full_computation = TRUE) {
+  # Follow Equation 4 from Grathwohl et al. but excludes the possibility
+  # of proposing the same state again.
+  # For efficiency, update previous d_tilde_half!
+  # If full_computation is TRUE, then previous d_tilde_half is not used.
+  # NOTE: based on unit tests, the speed gain from using stored d_tilde
+  # is marginal at best. TRUE is recommended.
+  #
+  # J: Scaled adjacency matrix
+  # W_prime: one-hoc representation of the Potts particles.
+  # index_row: which particle is updated in the proposal.
+  # W: one-hoc representation of the Potts particles at previous iter.
+  # d_tilde_half: obtained using W at previous iteration.
+
+  infinity = 10^10
+  n = nrow(W_prime)
+  q = ncol(W_prime)
+  if (!full_computation) index_col_prime = which_one(W_prime[index_row, ])
+  if (!full_computation) index_col = which_one(W[index_row, ])
+  d_tilde_half_prime = array(NA, dim = c(n, q))
+  d_tilde_half_corrected = array(NA, dim = c(n, q))
+  
+  for (i in 1:n) {
+    if (full_computation) {
+      JW_prime = J[i, ] %*% W_prime
+      d_tilde_half_prime[i, ] = JW_prime - rep(JW_prime %*% W_prime[i, ], q)      
+    } else {
+      if (i != index_row) {
+        d_tilde_half_prime[i, ] = d_tilde_half[i, ] +
+           J[i, index_row] * (w_diff -
+                              rep(W[i, index_col_prime] - W[i, index_col], q))
+      } else {
+        d_tilde_half_prime[i, ] = d_tilde_half[i, ] +
+          rep(J[i, ] %*% (W_prime[, index_col_prime] - W[, index_col]), q)
+      }
+    }
+
+    d_tilde_half_corrected[i, ] = d_tilde_half_prime[i, ]
+
+    # exclude possibility of proposing the same state
+    l_prime = which_one(W_prime[i, ])
+    d_tilde_half_corrected[i, l_prime] = - infinity
+  }
+
+  # CHECK -- should there be a 0.5?
+  return(list(d_tilde_half_prime = d_tilde_half_prime, 
+              d_tilde_half_corrected = d_tilde_half_corrected))
+}
+
+gwg_potts <- function(A, beta, init, n_states = 2, n_iter = 1000) {
+  n_particles = nrow(A)
+  J = beta * A # J = 0.5 * beta * A -- CHECK
+
+  W = array(0, dim = c(n_particles, n_states))
+  for (l in 1:n_states) W[init == l, l] = 1
+
+  X = array(NA, dim = c(n_iter, n_particles))
+
+  # initialize variables which carry over if a proposal is rejected.
+  d_list = compute_d_tilde_half(J, W, full_computation = TRUE)
+  d_tilde_half = d_list$d_tilde_half_prime
+  d_tilde_half_corrected = d_list$d_tilde_half_corrected
+
+  P = softmax(d_tilde_half_corrected)
+  f = 0
+  for (i in 2:n_particles) {
+    for (j in 1:(i - 1)) {
+      f = f + J[i, j] * t(W[i, ]) %*% W[j, ]
+    }
+  }
+  f = 2 * f
+  x_current = init
+
+  for (iter in 1:n_iter) {
+    # draw index to update from categorical
+    u = runif(1, 0, 1)
+    index_row = 1; index_col = 1
+    p_current = P[index_row, index_col]
+    while (u > p_current) {
+      if (index_row < n_particles) {
+        index_row = index_row + 1
+      } else {
+        index_col = index_col + 1
+        index_row = 1
+      }
+      p_current = p_current + P[index_row, index_col]
+    }
+
+    W_prime = W
+    W_prime[index_row, ] = 0
+    W_prime[index_row, index_col] = 1
+    
+    # Compute W' - W for flipped particle
+    w_diff = rep(0, n_states)
+    w_diff[index_col] = 1
+    w_diff[which(W[index_row, ] == 1)] = -1
+
+    d_list = compute_d_tilde_half(J, W_prime, index_row = index_row,
+                                  W = W, d_tilde_half = d_tilde_half,
+                                  w_diff = w_diff,
+                                  full_computation = FALSE)
+    d_tilde_half_prime = d_list$d_tilde_half_prime
+    d_tilde_half_corrected = d_list$d_tilde_half_corrected
+
+    exp_d_tilde_half = exp(d_tilde_half_corrected)
+    P_prime = exp_d_tilde_half / sum(exp_d_tilde_half)
+
+    # Reuse terms calculated for f to get f_proposal.
+    f_proposal = f
+    for (j in 1:n_particles) {
+      f_proposal = f_proposal + 2 * J[index_row, j] *
+                     t(w_diff) %*% W_prime[j, ]
+    }
+
+    index_col_past = which(W[index_row, ] == 1)
+    prob_accept = exp(f_proposal - f) *
+                     P_prime[index_row, index_col_past] / P[index_row, index_col]
+
+    u = runif(1, 0, 1)
+    if (u < prob_accept) {
+      x_current = rep(NA, n_particles)
+      for (n in 1:n_particles) x_current[n] = which(W_prime[n, ] == 1)
+      W = W_prime
+      P = P_prime
+      f = f_proposal
+      d_tilde_half = d_tilde_half_prime
+    }
+
+    X[iter, ] = x_current
+  }
+  
+  return (X)
+}
+
+gwg_sampler <- function(A, beta, init, n_states, n_iter) {
+  if (n_states == 2) {
+    X = gwg_ising(A, beta, init, n_iter)
+  } else {
+    X = gwg_potts(A, beta, init, n_states, n_iter)
+  }
+  
+  return(X)
+}
+
+
+###############################################################################
+# compute_d_tilde <- function(By, n_states, n_particles, B, y) {
+#   d_tilde = rep(NA, n_particles * n_states)
+#   for (l in 1:n_states) {
+#     index = (n_particles * (l - 1) + 1):(n_particles * l)
+#     By[, l] = B %*% y[index]
+#     d_tilde[index] = - 2 * y[index] * By[, l]
+#   }
+# 
+#   d_tilde
+# }
+# 
+# gwg_potts <- function(A, beta, init, n_states = 2, n_iter = 1000) {
+#   n_particles = nrow(A)
+#   
+#   y = array(0, dim = c(n_particles, n_states))
+#   for (l in 1:n_states) y[init == l, l] = 1
+#   y = c(y)
+#   
+#   Y = matrix(NA, nrow = n_iter, ncol = n_particles * n_states)
+#   Y[1, ] = y
+#   B = 0.5 * beta * A
+#   
+#   for (i in 1:n_iter) {
+#     # Use sparsity of augmented B to compute d_tilde
+#     By = array(NA, dim = c(n_particles, n_states))
+#     d_tilde = compute_d_tilde(By, n_states, n_particles, B, y)
+# 
+#     p = softmax(0.5 * d_tilde)
+# 
+#     # draw index to update from categorical
+#     u = runif(1, 0, 1)
+#     index = 1
+#     p_current = p[index]
+#     while (u > p_current) {
+#       index = index + 1
+#       p_current = p_current + p[index]
+#     }
+# 
+#     y_proposal = y
+#     y_proposal[index] = - y[index]
+#     
+#     By_proposal = array(NA, dim = c(n_particles, n_states))
+#     d_tilde_prop = compute_d_tilde(By_proposal, n_states, n_particles, B, 
+#                                    y_proposal)
+#     p_proposal = softmax(0.5 * d_tilde_prop)
+#     
+#     # TODO: reuse the calculate unnormalized density from the previous proposal!!
+#     log_f = 0
+#     log_f_proposal = 0
+#     for (l in 1:n_states) {
+#       index = (n_particles * (l - 1) + 1):(n_particles * l)
+#       log_f = log_f + y[index] %*% By[, l]
+#       log_f_proposal = log_f_proposal + y_proposal[index] %*% By_proposal[, l]
+#     }
+# 
+#     prob_accept = exp(lof_f_proposal - log_f) * p_proposal[index] / p_current[index]
+#     
+#     u = runif(1, 0, 1)
+#     if (u < prob_accept) {
+#       
+#     }
+#     
+#   }
+# }
+
+
+
 
 
 ## Test code

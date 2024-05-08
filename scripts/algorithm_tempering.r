@@ -24,7 +24,7 @@ tempering <- function(A, beta_vector, init_matrix,
   # n_mc_iter: number of sampling iterations between exchanges.
   # B: exterior magnetic field
   # f1: function for first sampler. Should accept A, beta, B,
-  #     an init vector, and n_mc_iter as arguments.
+  #     an init vector, n_mc_iter, and n_states as arguments.
   # f2: function for second sampler. Same as above.
   # which_sampler: which sampler to use for each replica. This
   #                should be a vector with the same length as
@@ -47,11 +47,11 @@ tempering <- function(A, beta_vector, init_matrix,
       if (which_sampler[b] == 1) {
         X[b, first_index:last_index, ] <-
           f1(A, beta_vector[b], B, current_init[b, ],
-             n_mc_iter)
+             n_mc_iter, n_states)
       } else {
         X[b, first_index:last_index, ] <-
           f2(A, beta_vector[b], B, current_init[b, ],
-             n_mc_iter)
+             n_mc_iter, n_states)
       }
     }
 
@@ -95,6 +95,46 @@ tempering <- function(A, beta_vector, init_matrix,
   print(exchange_rate / n_exchange)
 
   X
+}
+
+###############################################################################
+## Wrappers for samplers to be passed to tempering()
+
+f_AG <- function(A, beta, B, init, n_iter, n_states) {
+  ag_potts_simple(A = A, beta = beta, init = init, n_states = n_states,
+                  n_iter = n_iter)
+}
+
+f_AG_lowrank <- function(A, beta, B, init, n_iter, n_states) {
+  ag_potts_lowrank(A = A, beta = beta, init = init, n_states = n_states,
+                   n_iter = n_iter, epsilon = 1e-15)
+}
+
+f_HB <- function(A, beta, B, init, n_iter, n_states) {
+  hb_sampler(A = A, beta = beta, init = init,
+             n_iter = n_iter, is_potts = TRUE, 
+             n_states = n_states,
+             sub_sample = 1)  
+}
+
+sub_adjust <- 10
+f_HB_long <- function(A, beta, B, init, n_iter, n_states) {
+  hb_sampler(A = A, beta = beta, init = init,
+             n_iter = n_iter, is_potts = TRUE, 
+             n_states = n_states,
+             sub_sample = ceiling(graph_size / sub_adjust))
+}
+
+f_BHB <- function(A, beta, B, init, n_iter, n_states) {
+  hb_sampler(A = A, beta = beta, init = init,
+             n_iter = n_iter, is_potts = TRUE, 
+             n_states = n_states,
+             sub_sample = 1, black_box = TRUE)  
+}
+
+f_GWG <- function(A, beta, B, init, n_iter, n_states) {
+  gwg_potts(A = A, beta = beta, init = init,
+            n_states = n_states, n_iter = n_iter)
 }
 
 ###############################################################################

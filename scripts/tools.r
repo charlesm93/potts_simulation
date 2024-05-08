@@ -1,4 +1,5 @@
 # Convenient functions for evaluating ising model simulators.
+library(knitr)
 
 #####################################################################
 ## Functions to order Ising states.
@@ -44,12 +45,12 @@ count_states_single <- function(samples, n_part) {
   0.5 * (sum(samples) + n_part)
 }
 
-#####################################################################
+###############################################################################
 ## Functions to do an exact computation of the partition function.
 
-ising_kernel <- function (beta, A, x, B = 0, log = FALSE) {
-  # Returns the kernel for an ising model.
-  hamiltonian = 0.5 * beta * (t(x) %*% A %*% x) + B * sum(x)
+# Returns the kernel for an ising model.
+ising_kernel <- function (beta, A, x, B_field = 0, log = FALSE) {
+  hamiltonian = 0.5 * beta * (t(x) %*% A %*% x) + B_field * sum(x)
   if (log) { hamiltonian } else { exp(hamiltonian) }
 }
 
@@ -452,3 +453,39 @@ adjacency_graph <- function(n_part, type, anti_corr = FALSE,
   }
   A
 }
+
+
+###############################################################################
+## Softmax function
+# from https://rpubs.com/FJRubio/softmax
+
+softmax <- function(par){
+  n.par <- length(par)
+  par1 <- sort(par, decreasing = TRUE)
+  Lk <- par1[1]
+  for (k in 1:(n.par-1)) {
+    Lk <- max(par1[k+1], Lk) + log1p(exp(-abs(par1[k+1] - Lk))) 
+  }
+  val <- exp(par - Lk)
+  return(val)
+}
+
+softmax_brute <- function(par) {
+  
+}
+
+###############################################################################
+## custom which function
+
+which_one <- function (x) {
+  i = 1
+  while (x[i] != 1) i = i + 1
+  i
+}
+
+
+
+
+
+
+
