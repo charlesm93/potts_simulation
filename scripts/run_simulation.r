@@ -41,7 +41,8 @@ generate_quantities <- function(samples, beta, A, n_chains, q) {
         gen_quant[i, c, 3] <- ising_kernel(beta, A, samples[i, , c],
                                            log = TRUE)
       } else {
-        gen_quant[i, c, 3] <- potts_log_kernel(beta, A, samples[i, , c])
+        gen_quant[i, c, 3] <- potts_log_kernel(beta, A, samples[i, , c],
+                                               n_states = q)
       }
     }
   }
@@ -430,14 +431,19 @@ run_simulations(beta_range = c(0.6),  # c(0.5, 0.55, 0.6)
                 q = 4)
 
 # Potts complete
-run_simulations(beta_range = c(1.7),  # c(1.2, 1.64),
-                graph_types = rep("complete", 1),
-                graph_sizes = rep(24^2, 1),
-                n_samples_algo = c(5e4, 5e4, 1e5, 1e5, 5e4, 5e4, 1e4, 1e3),
-                algo_names = c("AG", "AG_lowrank", "HB", "HB_long", "BHB", "Wolff", "GWG",
-                               "dHMC"),
+# for beta = 1.2 and 1.64, can run 5e4 iterations for Wolff.
+# For beta > 2 run Wolff for 1e3 (clusters become large and algo takes time)
+# For beta = 1.8 and 1.75, do 1e4.
+run_simulations(beta_range = c(1.2, 1.64, 1.66, 1.7, 2, 3, 4),
+                graph_types = rep("complete", 2),
+                graph_sizes = rep(24^2, 2),
+                n_samples_algo = c(5e4, 5e4, 1e5, 1e5, 5e4, 1e4, 1e4),
+                algo_names = c("AG", "AG_lowrank", "HB", "HB_long", "BHB", "Wolff", "GWG"),
                 q = 4)
 
+
+# beta range: 1.64, 1.7, 2
+# additional ranges: 1.2, 1.66, 3, 4
 
 
 # Hopfield
@@ -458,7 +464,7 @@ run_simulations(beta_range = c(3),
                 graph_types = c("gaussian"),
                 graph_sizes = c(128),
                 n_samples_algo = c(0, 0),
-                algo_names = c("temp_AG"), #, "temp_HB_long"),
+                algo_names = c("temp_HB_long"), # c("temp_AG"), #, "temp_HB_long"),
                 q = 4,
                 beta_vector = beta_vector,
                 n_exchange = 40,

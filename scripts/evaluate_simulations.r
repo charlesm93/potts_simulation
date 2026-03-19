@@ -7,6 +7,10 @@ set.seed(1954)
 .libPaths("~/Rlib/")
 setwd("~/Code/ising_model/scripts/")
 
+# Stop matrixStats from checking two formulas for sample variance.
+# (This causes issues when calculating low variances, when beta is large.)
+Sys.setenv(R_MATRIXSTATS_VARS_FORMULA_FREQ = 0)
+
 library(ggplot2)
 library(tidyverse)
 library(posterior)
@@ -17,8 +21,8 @@ library(latex2exp)
 deliv_dir <- file.path(getwd(), "deliv_v3")
 
 # options: "Ising grid", "Potts grid", "Ising complete", "Potts complete",
-#          "Spin Glass"
-experiment <- "Spin Glass"
+#          "Hopfield", "Spin Glass"
+experiment <- "Hopfield"
 
 plot_temp <- FALSE
 if (experiment == "Ising grid") {
@@ -29,7 +33,13 @@ if (experiment == "Ising grid") {
   algo_names <- c("AG", "HB", "HB_long", "BHB", "Wolff", "GWG", "dHMC")
   n_sample_vec <- c(5e4, 10e4, 5e4, 5e4, 5e3, 10e4, 1e3)
   
+  algo_label <- c("AG", "Metropolis", "Metropolis Long", "BB Metropolis",
+                  "Wolff", "GWG", "dHMC")
+  
   algo_to_emphasize <- c("AG")
+  
+  figure_names <- paste0("figures/", c("Rhat_ising_grid.pdf",
+                                       "ess_ising_grid.pdf"))
 }
 
 if (experiment == "Potts grid") {
@@ -39,6 +49,12 @@ if (experiment == "Potts grid") {
   beta_range <- c(0.5, 0.55, 0.6)
   algo_names <- c("AG", "HB", "HB_long", "BHB", "Wolff", "GWG", "dHMC")
   n_sample_vec = c(5e4, 1e5, 1e5, 5e4, 5e4, 1e4, 1e3)
+  
+  algo_label <- c("AG", "Metropolis", "Metropolis Long", "BB Metropolis",
+                  "Wolff", "GWG", "dHMC")
+  
+  figure_names <- paste0("figures/", c("Rhat_potts_grid.pdf",
+                                       "ess_potts_grid.pdf"))
   
   algo_to_emphasize <- c("AG", "AG_lowrank")
 }
@@ -52,16 +68,27 @@ if (experiment == "Ising complete") {
                   "Wolff", "GWG", "dHMC")
   n_sample_vec <- c(5e4, 5e4, 1e5, 5e4, 5e4, 5e3, 1e5, 1e3)
   
+  algo_label <- c("AG", "AG lowrank", "Metropolis", "Metropolis Long", 
+                  "BB Metropolis", "Wolff", "GWG", "dHMC")
+  
+  figure_names <- paste0("figures/", c("Rhat_ising_complete.pdf",
+                                       "ess_ising_complete.pdf"))
+  
   algo_to_emphasize <- c("AG", "AG_lowrank")  
 }
 
 if (experiment == "Potts complete") {
-  cbPalette <-c("#D55E00", "#CC79A7", "#E69F00", "#009E73", "#F0E442", "#0072B2",
-                "#999999")
+  cbPalette <-c("#D55E00", "#CC79A7", "#009E73", "#0072B2", "#999999")
   n_part <- 24^2; graph <- "complete"; q <- 4;
-  beta_range <- c(1.2, 1.64, 1.7)
-  algo_names <- c("AG", "AG_lowrank", "HB", "HB_long", "BHB", "Wolff", "GWG")
-  n_sample_vec <- c(5e4, 5e4, 1e5, 1e5, 5e4, 1e3, 5e3)
+  beta_range <- c(1.2, 1.64, 1.66, 1.7, 2, 3, 4)
+  # beta_range <- c(1.2, 1.64, 1.66, 1.69, 1.7, 1.71, 1.75, 1.8, 2, 2.5, 3.9, 4.1)
+  algo_names <- c("AG", "AG_lowrank", "HB_long", "Wolff", "GWG")
+  n_sample_vec <- c(5e4, 5e4, 1e5, 1e4, 1e4)
+  
+  algo_label <- c("AG", "AG lowrank", "Metropolis Long", "Wolff", "GWG")
+  
+  figure_names <- paste0("figures/", c("Rhat_potts_complete.pdf",
+                                       "ess_potts_complete.pdf"))
 
   algo_to_emphasize <- c("AG", "AG_lowrank", "Wolff")  
 }
@@ -74,7 +101,13 @@ if (experiment == "Hopfield") {
   algo_names <- c("AG", "AG_lowrank", "HB_long")
   n_sample_vec <- c(5e4, 5e4, 5e4)
   
-  algo_to_emphasize <- c("AG", "AG_lowrank")  
+  algo_to_emphasize <- c("AG", "AG_lowrank")
+  
+  algo_label <- c("AG", "AG lowrank", "Metropolis Long")
+  
+  figure_names <- paste0("figures/", c("Rhat_hopfield.pdf",
+                                       "ess_hopfield.pdf"))
+  
 }
 
 if (experiment == "Spin Glass") {
@@ -83,6 +116,11 @@ if (experiment == "Spin Glass") {
   beta_range <- seq(from = 0.5, to = 3, by = 0.25)
   algo_names <- c("AG", "temp_AG", "temp_HB_long")
   n_sample_vec <- c(8e4, 8e4, 8e4)
+  
+  algo_label <- c("AG", "Temp AG", "Temp Metropolis Long")
+  
+  figure_names <- paste0("figures/", c("Rhat_spinglass.pdf",
+                                       "ess_spinglass.pdf"))
   
   algo_to_emphasize <- c("AG", "temp_AG")
   
@@ -96,34 +134,12 @@ perturbation <- rep(FALSE, n_algorithms)
 n_sample <- max(n_sample_vec)
 n_chains <- 4
 
-# n_part <- 24^2 # options: 128, 16^2, 24^2
-# graph <- "grid" # options: "grid", "complete", "hopfield", "gaussian
-# q <- 4
 
-# beta_range <- c(0.5, 1, 1.5)
-# beta_range <- c(0.5, 0.65, 1/sqrt(2), 0.75, 0.8, 1)  # Ising grid
-# beta_range <- c(0.55)  # Potts grid
-# beta_range <- c(0.71)
-# beta_range <- seq(from = 0.5, to = 3, by = 0.25)
-
-
-
-
-# algo_names <- c("AG", "AG_lowrank", "HB", "HB_long", "BHB", "Wolff", "GWG", "dHMC")  # complete
-# algo_names <- c("AG", "HB", "HB_long", "BHB", "Wolff", "GWG", "dHMC")  # Ising grid
-# algo_names <- c("AG", "HB", "HB_long", "BHB", "Wolff", "GWG")  # potts grid
-# algo_names <- c("AG", "AG_lowrank", "HB_long")
-# algo_names <- c("AG", "temp_AG", "temp_HB_long")
-
-# n_algorithms <- length(algo_names)
-# perturbation <- rep(FALSE, n_algorithms)
-
-# n_sample_vec <- c(5e4, 5e4, 10e4, 5e4, 5e4, 5e3, 10e4, 1e3)  # complete
-# n_sample_vec <- c(5e4, 10e4, 5e4, 5e4, 5e3, 10e4, 1e3) # Ising grid
-# n_sample_vec <- c(5e4, 1e5, 1e5, 5e4, 5e4, 1e4)
-# n_sample_vec <- c(5e4, 5e4, 5e4, 5e4, 5e4, 5e4)
-# n_sample_vec <- c(5e4, 1e5, 1e5, 5e4, 5e4, 1e4)
-# n_sample_vec <- c(8e4, 8e4, 8e4)
+# helper function
+b_to_beta <- function(x) {
+  # x: character vector like "b=0.65"
+  sub("^b\\s*=\\s*", "beta == ", x)
+}
 
 ###############################################################################
 
@@ -196,7 +212,7 @@ for (j in 1:n_cases) {
         n_burnin <- floor(checkpoints[i] / 2)
         rhat_vec[j, i, a] <- rhat_nested(energy[j, a, n_burnin:checkpoints[i], ],
                                          superchain_ids = 1:n_chains)
-        
+
         last_index = i
       } else {
         rhat_vec[j, i, a] = rhat_vec[j, last_index, a]
@@ -230,13 +246,22 @@ plot_data$alpha <- rep(0.75, n_algorithms * n_checkpoints)
 
 plot_data[plot_data$algorithm %in% algo_to_emphasize, ]$alpha <- 1
 
+# Adjust data set for plot clarity
+plot_data$sampler <- factor(plot_data$algorithm)
+levels(plot_data$sampler) <- algo_label[order(algo_names)]
+plot_data$sampler <- factor(plot_data$sampler, levels = algo_label)
+plot_data$beta <- b_to_beta(plot_data$beta)
+
+# plot_data$temp <- factor(plot_data$beta)
+# levels(plot_data$temp) <- c("beta == 0.65", "beta == 0.707", "beta == 0.75")
+
 scaleFUN <- function(x) sprintf("%.3f", x)
 
 # Plot by inverse temperature beta
-p <- ggplot(data = plot_data, aes(x = time, y = rhat, color = algorithm)) +
+p <- ggplot(data = plot_data, aes(x = time, y = rhat, color = sampler)) +
   geom_line(aes(alpha=alpha), linewidth=1) + 
   scale_y_continuous(trans='log10') +
-  facet_wrap(~beta) +
+  facet_wrap(~beta, labeller = label_parsed) +
   theme_bw() + geom_hline(yintercept=0.01, linetype="dashed", color = "black") +
   geom_hline(yintercept=0.1, linetype="dashed", color = "grey") +
   scale_color_manual(values= cbPalette) +
@@ -245,6 +270,8 @@ p <- ggplot(data = plot_data, aes(x = time, y = rhat, color = algorithm)) +
   scale_alpha(range = c(0.5, 1)) +  guides(alpha = "none") +
   theme(text = element_text(size = 15))
 p
+
+ggsave(filename=figure_names[1], plot=p, width=10, height=4)
 
 # Plot by rank of hopfield graph
 if (graph == "hopfield") {
@@ -259,8 +286,10 @@ if (graph == "hopfield") {
     scale_x_continuous(trans='log2', labels=scaleFUN) +
     scale_alpha(range = c(0.5, 1)) +  guides(alpha = "none")
   p
+  
+  ggsave(filename=figure_names[1], plot=p, width=10, height=4)
+  
 }
-
 
 
 energy_mean <- array(NA, c(n_cases, n_algorithms))
@@ -288,6 +317,7 @@ if (graph == "hopfield") {
   plot_data$rank <- rep(m_hopfield_range[1], n_cases * n_algorithms)
 }
 
+
 ## Tuning parameters for what constitutes an acceptable convergence
 if (plot_temp) {
   rhat_threshold <- 1.15
@@ -303,8 +333,13 @@ if (graph == "grid") {
   levels(plot_data$beta)[which(beta_range == 1 / sqrt(2))] <- "0.71"
 }
 
+# Adjust data set for plot clarity
+plot_data$sampler <- factor(plot_data$algorithm)
+levels(plot_data$sampler) <- algo_label[order(algo_names)]
+plot_data$sampler <- factor(plot_data$sampler, levels = algo_label)
 
-p_bar_ising <- ggplot(plot_data, aes(x = beta, y = eff_if_conv, fill = algorithm)) +
+
+p_bar_ising <- ggplot(plot_data, aes(x = beta, y = eff_if_conv, fill = sampler)) +
   geom_col(color = 'black', position = position_dodge()) + theme_bw() +
   scale_fill_manual(values= cbPalette) +
   scale_y_continuous(trans='sqrt') +
@@ -313,9 +348,11 @@ p_bar_ising <- ggplot(plot_data, aes(x = beta, y = eff_if_conv, fill = algorithm
   ylab(TeX("$ESS / s"))
 p_bar_ising
 
+ggsave(filename = figure_names[2], p_bar_ising, width = 10, height = 4)
+
 plot_data$beta <- rep(beta_range, n_algorithms)
 p_line <- ggplot(plot_data[plot_data$rhat_final < rhat_threshold, ], 
-                 aes(x = beta, y = ess_s, color = algorithm)) +
+                 aes(x = beta, y = ess_s, color = sampler)) +
   geom_line(linewidth=1) + geom_point(size = 2) + theme_bw() +
   scale_color_manual(values= cbPalette) +
   scale_y_continuous(trans='log2') +
@@ -336,13 +373,16 @@ if (graph == "hopfield") {
 
   p_bar_ising
   
-  p_line <- ggplot(plot_data, aes(x = rank, y = eff_if_conv, color = algorithm)) +
+  p_line <- ggplot(plot_data, aes(x = rank, y = eff_if_conv, color = sampler)) +
     geom_line(linewidth=2) + geom_point(size = 3) + theme_bw() +
     scale_color_manual(values= cbPalette) +
     xlab(" ") + xlab("rank of A") +
     theme(text = element_text(size = 13)) + ggtitle(paste0("q = ", q)) +
-    ylab("ESS / s") # + scale_y_continuous(trans = 'log2')
+    ylab("ESS / s") + scale_y_continuous(trans = 'log2')
   p_line
+  
+  ggsave(filename = figure_names[2], p_line, width = 10, height = 4)
+  
 }
 
 if (TRUE) {
@@ -351,3 +391,4 @@ if (TRUE) {
   print(ess)
   print(ess_s)
 }
+
